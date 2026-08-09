@@ -163,6 +163,13 @@ async def test_roots_from_ctx_file_uris():
     assert source == "client"
 
 
+async def test_roots_from_ctx_translates_wsl_drive_letter_path():
+    ctx = _FakeCtx(["file:///I:/ai/claude/claude-configs"])
+    paths, source = await server._roots_from_ctx(ctx)
+    assert paths == ["/mnt/i/ai/claude/claude-configs"]
+    assert source == "client"
+
+
 async def test_roots_from_ctx_none():
     assert await server._roots_from_ctx(None) == ([], "not_negotiated")
 

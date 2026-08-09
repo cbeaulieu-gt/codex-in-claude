@@ -17,7 +17,7 @@ import signal
 import sys
 import threading
 import time
-from pathlib import Path
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast, get_args
 from urllib.parse import unquote, urlparse
 from uuid import uuid4
@@ -948,11 +948,11 @@ async def _roots_from_ctx(ctx: Context | None) -> tuple[list[str], RootsSource]:
         # non-local host (file://example.com/tmp) or a drive-letter authority
         # (file://C:/repo) would otherwise have its path misread as a local path.
         if parsed.scheme == "file" and parsed.netloc in ("", "localhost"):
-            path = unquote(parsed.path)
+            path = workspace.normalize_wsl_drive_path(unquote(parsed.path))
             # Keep only non-empty absolute paths: a malformed file: URI (empty or
             # relative path) is not an actionable workspace and would contradict the
             # "absolute filesystem paths" contract candidate_roots advertises (#95).
-            if path and Path(path).is_absolute():
+            if path and PurePosixPath(path).is_absolute():
                 paths.append(path)
     return paths, "client"
 
