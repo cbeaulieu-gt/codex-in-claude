@@ -38,6 +38,10 @@ agent-visible MCP surface; the result `fingerprint` changes when they do.
 
 ### Fixed
 
+- **Windows drive-letter workspace roots advertised to a WSL2-hosted server now resolve to their
+  WSL mount paths.** Decoded `file:///I:/...` MCP roots and matching explicit `workspace_root`
+  values are translated to `/mnt/i/...` before filesystem and advertised-root validation, while
+  non-drive paths pass through unchanged.
 - **`COMPATIBILITY.md` corrects the 2026-08-02 "parent `AGENTS.md` above the git root is loaded"
   observation.** That mechanism does not reproduce on `0.146.0` or `0.147.0`: the parent codeword
   was absent from both binaries with a project `AGENTS.md` present, with it removed, and with
