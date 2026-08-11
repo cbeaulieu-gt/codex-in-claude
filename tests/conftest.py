@@ -89,6 +89,27 @@ def _reset_preflight_cache():
     preflight.reset_cache()
 
 
+@pytest.fixture(autouse=True)
+def _reset_binpath_cache():
+    """Each test starts with a clean `codex_bin()` resolution cache (#3).
+
+    `codex_in_claude.binpath` does not exist yet (test-first: this fixture is
+    part of the frozen test contract for the module that follows). Importing it
+    unconditionally here would turn a plain `ModuleNotFoundError` into a
+    collection-time failure for every test in the suite, not just
+    test_binpath.py/test_binresolve.py -- so the import is attempted lazily and
+    swallowed until the module lands, mirroring `_reset_preflight_cache` once it
+    does."""
+    try:
+        from codex_in_claude import binpath
+    except ImportError:
+        yield
+        return
+    binpath.reset_cache()
+    yield
+    binpath.reset_cache()
+
+
 @pytest.fixture
 def clean_env(monkeypatch):
     """Strip CODEX_IN_CLAUDE_* env so tests see built-in defaults."""
