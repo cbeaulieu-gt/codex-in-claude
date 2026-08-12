@@ -38,6 +38,11 @@ agent-visible MCP surface; the result `fingerprint` changes when they do.
 
 ### Fixed
 
+- **WSL2 subprocesses now resolve the WSL-native `codex` binary instead of an unreachable Windows
+  npm shim.** A bare `codex` on the interop `PATH` could select the Windows global install and fail
+  with `node: not found` (exit 127). Every `codex` spawn site now uses an ordered candidate probe —
+  `$HOME/.local/bin`, `/usr/local/bin`, `npm bin -g`, then `shutil.which` — with an explicit
+  `CODEX_IN_CLAUDE_CODEX_BIN` override for operators who need to pin a specific binary.
 - **Windows drive-letter workspace roots advertised to a WSL2-hosted server now resolve to their
   WSL mount paths.** Decoded `file:///I:/...` MCP roots and matching explicit `workspace_root`
   values are translated to `/mnt/i/...` before filesystem and advertised-root validation, while

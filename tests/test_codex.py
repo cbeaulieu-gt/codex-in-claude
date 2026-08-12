@@ -20,7 +20,8 @@ _ALL_FLAGS = FlagSupport(
 _NO_MODEL = FlagSupport(supported=frozenset(cli_contract.ALWAYS_SEND_FLAGS), help_parsed=True)
 
 
-def test_build_exec_command_core(tmp_path):
+def test_build_exec_command_core(tmp_path, monkeypatch):
+    monkeypatch.setattr(codex.binpath, "codex_bin", lambda: "codex")
     out = str(tmp_path / "last.txt")
     cmd, dropped = codex.build_exec_command(
         cwd="/repo",

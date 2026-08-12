@@ -81,6 +81,7 @@ def test_cache_reused(monkeypatch):
         return CommandRun(_HELP, "", 0, 1, False)
 
     monkeypatch.setattr(preflight.runtime, "run_sync_capture", fake)
+    monkeypatch.setattr(preflight.binpath, "codex_bin", lambda: "codex")
     preflight.reset_cache()
     preflight.flag_support()
     preflight.flag_support()
