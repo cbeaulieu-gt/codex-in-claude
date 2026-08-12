@@ -224,6 +224,7 @@ rate-limit reporting (`codex_status`), background-job semantics, and workspace s
 | Var | Default | Meaning |
 |-----|---------|---------|
 | `CODEX_IN_CLAUDE_MODEL` | unset | Codex model override |
+| `CODEX_IN_CLAUDE_CODEX_BIN` | auto-resolved | explicit `codex` CLI binary path; a non-empty value is used exactly as given (including a bare name, without `PATH` re-resolution) and must exist on disk or startup fails loudly. When unset, probes `$HOME/.local/bin`, `/usr/local/bin`, and `npm bin -g` before `shutil.which("codex")`, then falls back to the bare `"codex"` literal; this avoids WSL2 selecting an unreachable Windows npm shim |
 | `CODEX_IN_CLAUDE_REASONING_EFFORT` | unset | Codex reasoning-effort override, sent as a `model_reasoning_effort` config override on every paid call; an open per-model string the Codex backend validates — `codex_models` lists each model's advertised set (semantics and probes in `COMPATIBILITY.md`). The per-call `reasoning_effort` parameter overrides it; a backend-rejected value fails as `invalid_reasoning_effort` |
 | `CODEX_IN_CLAUDE_TIMEOUT_SECONDS` | 300 | per-call timeout (clamped 10–600) |
 | `CODEX_IN_CLAUDE_ISOLATION` | `inherit` | `inherit` \| `ignore-config` \| `ignore-rules` |
@@ -252,6 +253,7 @@ Run `/codex:status` first — it's free (no model call) and diagnoses most setup
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `codex` not found | CLI not installed or not on `PATH` | Install the [`codex` CLI](https://developers.openai.com/codex/cli) and ensure it's on `PATH` |
+| `node: not found` / exit 127 under WSL2 | A Windows npm `codex` shim was selected instead of the WSL-native binary | Set `CODEX_IN_CLAUDE_CODEX_BIN` to the WSL-native `codex` binary path |
 | Not authenticated | No Codex login | `codex login` (ChatGPT or API key) |
 | Unsupported-version warning | Your `codex` version is outside the tested range | Update `codex`, or set `CODEX_IN_CLAUDE_SUPPORTED_VERSIONS` once you've verified it works |
 | `meta.workspace_warning` in results | Server fell back to its own launch directory | Run from the target repo, or pass `workspace_root` (see [`docs/REFERENCE.md`](docs/REFERENCE.md#workspace-selection)) |
