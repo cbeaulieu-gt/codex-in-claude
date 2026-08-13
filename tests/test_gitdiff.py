@@ -1783,13 +1783,14 @@ def test_global_excludes_flags_sanitizes_inherited_git_dir(tmp_path, monkeypatch
     assert flags == ["-c", f"core.excludesFile={xdg / 'git' / 'ignore'}"]
 
 
-def test_resolver_env_adds_only_global_config_allowlist_over_base(monkeypatch):
+def test_resolver_env_adds_only_global_config_allowlist_over_base(monkeypatch, tmp_path):
     # The resolver env must be the enumeration child's base env plus ONLY the global-config
     # source vars, so repo discovery and the system/local config view match the child and
     # nothing can divert resolution to a different repo/config (#330 review). Asserted on the
     # DELTA (resolver env minus base env) so it is robust to whatever the base env contains
     # (e.g. the conftest system-isolation seam) — the invariant is purely about what the
-    # allowlist ADDS.
+    # allowlist ADDS. `tmp_path` has no `.git`, so the WSL gitdir-pointer override (#4) is
+    # `{}` for both calls and does not participate in this delta.
     diverting = [
         "GIT_DIR",
         "GIT_WORK_TREE",
@@ -1811,8 +1812,8 @@ def test_resolver_env_adds_only_global_config_allowlist_over_base(monkeypatch):
     monkeypatch.setenv("HOME", "/home/u")
     monkeypatch.setenv("XDG_CONFIG_HOME", "/home/u/.config")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/home/u/.gitconfig")
-    base = gitdiff._base_git_env()
-    env = gitdiff._resolver_env()
+    base = gitdiff._base_git_env(str(tmp_path))
+    env = gitdiff._resolver_env(str(tmp_path))
     # Everything in the base env is present unchanged.
     for key, value in base.items():
         assert env[key] == value
@@ -2150,3 +2151,71 @@ def test_sum_numstat_counts_reader_truncated_record_exactly():
     # that happens to contain that text.
     truncated = "1\t2\t" + "d" * 64 + "…[line truncated]\n"
     assert gitdiff._sum_numstat(iter([truncated, "5\t5\tb.py\n"])) == (2, 6, 7)
+
+
+# --- _base_git_env(cwd) / _resolver_env(cwd): WSL gitdir-pointer threading (#4) -----
+#
+# Fork issue #4 / plan §3: `_base_git_env` and `_resolver_env` gain a required `cwd`
+# parameter so a Windows-shaped linked-worktree `gitdir:` pointer at `cwd` is
+# translated into `GIT_DIR`/`GIT_WORK_TREE` for every one of the ten git-spawning
+# sites that derive their env from these two constructors (plan §2.3's table).
+
+
+def test_base_git_env_and_resolver_env_agree_on_git_dir_for_same_cwd(tmp_path):
+    # The #330 invariant (plan §3.4), now covering the WSL-translated case too: both
+    # env constructors must derive the SAME GIT_DIR/GIT_WORK_TREE from the SAME cwd,
+    # so the excludes resolver and the enumeration child always discover the same
+    # repo -- even when a Windows-shaped linked-worktree pointer is in play.
+    (tmp_path / ".git").write_text("gitdir: I:/apps/x/.git/worktrees/n\n")
+    base = gitdiff._base_git_env(str(tmp_path))
+    resolver = gitdiff._resolver_env(str(tmp_path))
+    assert base.get("GIT_DIR") == resolver.get("GIT_DIR") == "/mnt/i/apps/x/.git/worktrees/n"
+    assert base.get("GIT_WORK_TREE") == resolver.get("GIT_WORK_TREE") == str(tmp_path)
+
+
+def test_base_git_env_and_resolver_env_agree_absent_for_ordinary_repo(repo):
+    # Same invariant, negative case: neither constructor injects GIT_DIR/GIT_WORK_TREE
+    # for an ordinary checkout -- the #330 "never inherited, only ever derived from the
+    # same cwd" posture holds when there is nothing to derive.
+    base = gitdiff._base_git_env(str(repo))
+    resolver = gitdiff._resolver_env(str(repo))
+    assert "GIT_DIR" not in base
+    assert "GIT_WORK_TREE" not in base
+    assert "GIT_DIR" not in resolver
+    assert "GIT_WORK_TREE" not in resolver
+
+
+def test_base_git_env_ordinary_repo_matches_across_independent_repos(tmp_path):
+    # Containment property (plan §3.3): threading `cwd` through must not leak any
+    # per-repo detail into an ordinary repo's env -- two unrelated ordinary checkouts
+    # (byte-identical to each other, and therefore to "today") get identical output.
+    # Deliberately does not hardcode the literal key set: this suite's autouse
+    # `_isolate_git_env` fixture (conftest.py) augments the real return value with a
+    # test-only `GIT_CONFIG_NOSYSTEM` key for host-independence, so the portable
+    # assertion is parity across repos plus the explicit absence checked above, not a
+    # literal dict snapshot.
+    repo_a = tmp_path / "a"
+    repo_b = tmp_path / "b"
+    (repo_a / ".git").mkdir(parents=True)
+    (repo_b / ".git").mkdir(parents=True)
+    assert gitdiff._base_git_env(str(repo_a)) == gitdiff._base_git_env(str(repo_b))
+
+
+def test_base_git_env_derives_from_the_passed_cwd_not_a_sibling_repo(tmp_path):
+    # Per-site path derivation (plan §2.3): any env override must be derived from the
+    # SAME path the call site passes as `cwd`, never from a different ambient repo
+    # path. A Windows-shaped pointer at `wt` must translate when `cwd=wt`, and must
+    # not leak into a sibling ordinary repo even though both exist side by side.
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    (wt / ".git").write_text("gitdir: I:/apps/x/.git/worktrees/n\n")
+    other = tmp_path / "other"
+    (other / ".git").mkdir(parents=True)
+
+    wt_env = gitdiff._base_git_env(str(wt))
+    other_env = gitdiff._base_git_env(str(other))
+
+    assert wt_env["GIT_DIR"] == "/mnt/i/apps/x/.git/worktrees/n"
+    assert wt_env["GIT_WORK_TREE"] == str(wt)
+    assert "GIT_DIR" not in other_env
+    assert "GIT_WORK_TREE" not in other_env
