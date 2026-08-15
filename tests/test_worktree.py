@@ -1501,7 +1501,7 @@ def test_ensure_repo_with_head_fails_fast_for_windows_shaped_gitdir_pointer(tmp_
     # so any reasonable wording of the guard satisfies this without a dispute
     # round-trip -- "not a git repository" contains none of these today.
     (tmp_path / ".git").write_text("gitdir: I:/apps/x/.git/worktrees/n\n")
-    with pytest.raises(RuntimeError) as ei:
+    with pytest.raises(worktree.NotAGitRepoError) as ei:
         worktree.ensure_repo_with_head(str(tmp_path), timeout=10)
     msg = str(ei.value).lower()
     assert any(token in msg for token in ("gitdir", "windows", "wsl")), msg
@@ -1512,8 +1512,25 @@ def test_create_fails_fast_for_windows_shaped_gitdir_pointer_before_any_write(tm
     # rather than attempt (and half-succeed or corrupt) a `git worktree add`. Same
     # disjunctive message match as the guard test above.
     (tmp_path / ".git").write_text("gitdir: I:/apps/x/.git/worktrees/n\n")
-    with pytest.raises(RuntimeError) as ei:
+    with pytest.raises(worktree.NotAGitRepoError) as ei:
         worktree.create(str(tmp_path), timeout=30)
+    msg = str(ei.value).lower()
+    assert any(token in msg for token in ("gitdir", "windows", "wsl")), msg
+
+
+def test_ensure_repo_with_head_fails_fast_for_nested_windows_shaped_gitdir_pointer(tmp_path):
+    # CodeRabbit (Major): the guard's direct check (`linked_worktree_gitdir(repo)`, no
+    # ancestor walk) only catches the case where `repo` IS the linked-worktree root. A
+    # directory NESTED under that root, with no `.git` of its own, must still be caught
+    # -- via the ancestor-aware discovery path (`git_dir_override`'s walk-up) -- and raise
+    # the same actionable NotAGitRepoError, not fall through to the generic
+    # "workspace is not a git repository" message. Same disjunctive message match as the
+    # sibling guard tests above.
+    (tmp_path / ".git").write_text("gitdir: I:/apps/x/.git/worktrees/n\n")
+    nested = tmp_path / "src" / "pkg"
+    nested.mkdir(parents=True)
+    with pytest.raises(worktree.NotAGitRepoError) as ei:
+        worktree.ensure_repo_with_head(str(nested), timeout=10)
     msg = str(ei.value).lower()
     assert any(token in msg for token in ("gitdir", "windows", "wsl")), msg
 
@@ -1553,3 +1570,9 @@ def test_base_env_ordinary_repo_unaffected_by_cwd_parameter(repo):
     env = worktree._base_env(str(repo))
     assert "GIT_DIR" not in env
     assert "GIT_WORK_TREE" not in env
+    # CodeRabbit (Minor): `_base_env` is built from `gitdiff._base_git_env`, the SAME
+    # chokepoint the `_isolate_git_env` autouse fixture patches to add
+    # GIT_CONFIG_NOSYSTEM=1 (conftest.py) -- that isolation must still be present after
+    # `_base_env` pops GIT_DIR/GIT_WORK_TREE back out, not just the absence of the two
+    # popped keys.
+    assert env.get("GIT_CONFIG_NOSYSTEM") == "1"

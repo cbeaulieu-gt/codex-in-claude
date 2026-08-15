@@ -41,8 +41,10 @@ agent-visible MCP surface; the result `fingerprint` changes when they do.
 - **Windows-created linked git worktree pointers are now translated for WSL2 reviews.**
   `codex_review_changes` derives `GIT_DIR` and `GIT_WORK_TREE` from the same working directory
   used by each git child, allowing a `.git` file containing `gitdir: I:/...` to resolve under
-  WSL. The `codex_delegate` write path deliberately refuses this layout with an actionable error,
-  because translating it there could write WSL-shaped metadata that Windows-side git cannot read.
+  WSL. Discovery walks up from nested directories and always supplies an absolute work-tree path,
+  including when the caller's working directory is relative. The `codex_delegate` write path
+  deliberately refuses this layout with an actionable error before spawning git, because
+  translating it there could write WSL-shaped metadata that Windows-side git cannot read.
 - **WSL2 subprocesses now resolve the WSL-native `codex` binary instead of an unreachable Windows
   npm shim.** A bare `codex` on the interop `PATH` could select the Windows global install and fail
   with `node: not found` (exit 127). Every `codex` spawn site now uses an ordered candidate probe —

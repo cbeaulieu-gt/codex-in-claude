@@ -57,6 +57,36 @@ def linked_worktree_gitdir(cwd: str) -> str | None:
     return normalized if normalized != value else None
 
 
+def _first_git_marker_ancestor(cwd: str) -> Path | None:
+    """Return the first ancestor containing a ``.git`` marker."""
+    current = Path(cwd).absolute()
+    for _ in range(_MAX_PARENT_LEVELS):
+        marker = current / ".git"
+        try:
+            marker_exists = marker.exists()
+        except OSError:
+            return None
+        if marker_exists:
+            return current
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    return None
+
+
+def linked_worktree_gitdir_from_ancestors(cwd: str) -> str | None:
+    """Find a Windows-shaped linked-worktree gitdir pointer above ``cwd``.
+
+    Repository discovery stops at the first ancestor containing any ``.git``
+    marker, matching git's ownership boundary for the working tree.
+    """
+    work_tree = _first_git_marker_ancestor(cwd)
+    if work_tree is None:
+        return None
+    return linked_worktree_gitdir(str(work_tree))
+
+
 def git_dir_override(cwd: str) -> dict[str, str]:
     """Build git environment overrides for a Windows-created worktree.
 
@@ -72,20 +102,10 @@ def git_dir_override(cwd: str) -> dict[str, str]:
         ``GIT_DIR`` and ``GIT_WORK_TREE`` for a translated pointer, or an empty
         dictionary for every ordinary repository shape.
     """
-    current = Path(cwd)
-    for _ in range(_MAX_PARENT_LEVELS):
-        marker = current / ".git"
-        try:
-            marker_exists = marker.exists()
-        except OSError:
-            return {}
-        if marker_exists:
-            gitdir = linked_worktree_gitdir(str(current))
-            if gitdir is None:
-                return {}
-            return {"GIT_DIR": gitdir, "GIT_WORK_TREE": str(current)}
-        parent = current.parent
-        if parent == current:
-            break
-        current = parent
-    return {}
+    work_tree = _first_git_marker_ancestor(cwd)
+    if work_tree is None:
+        return {}
+    gitdir = linked_worktree_gitdir_from_ancestors(str(work_tree))
+    if gitdir is None:
+        return {}
+    return {"GIT_DIR": gitdir, "GIT_WORK_TREE": str(work_tree)}

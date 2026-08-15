@@ -244,6 +244,25 @@ def test_git_dir_override_walk_up_stops_at_the_first_marker_found(tmp_path):
     assert wslpath.git_dir_override(str(sub)) == {}
 
 
+def test_git_dir_override_returns_absolute_work_tree_for_relative_cwd(tmp_path, monkeypatch):
+    # CodeRabbit (Major): when `cwd` is relative, the walk-up never re-anchors it to an
+    # absolute path -- `GIT_WORK_TREE` comes back exactly as relative as the `cwd` that
+    # was walked to reach it. Git then receives that same relative path after changing
+    # to `cwd` and can fail. `GIT_WORK_TREE` must always be absolute, however relative
+    # the input `cwd` was.
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    _write_gitdir_file(repo_dir / ".git", "gitdir: I:/apps/x/.git/worktrees/n\n")
+    nested = repo_dir / "src" / "pkg"
+    nested.mkdir(parents=True)
+
+    monkeypatch.chdir(tmp_path)
+    override = wslpath.git_dir_override("repo/src/pkg")
+
+    assert Path(override["GIT_WORK_TREE"]).is_absolute()
+    assert Path(override["GIT_WORK_TREE"]) == repo_dir
+
+
 def test_git_dir_override_returns_empty_when_no_dot_git_within_ceiling(tmp_path):
     # A moderately deep chain with no `.git` marker anywhere must terminate and
     # report "no override" rather than hang or raise -- the walk-up is bounded

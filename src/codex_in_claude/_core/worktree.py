@@ -302,7 +302,7 @@ def _git_ok(repo: str, args: list[str], timeout: int, *, aliases: Iterable[str] 
 
 
 def _ensure_repo_with_head(repo: str, timeout: int) -> None:
-    gitdir = wslpath.linked_worktree_gitdir(repo)
+    gitdir = wslpath.linked_worktree_gitdir_from_ancestors(repo)
     if gitdir is not None:
         raise NotAGitRepoError(
             "workspace's .git file points at a Windows-shaped linked-worktree "
