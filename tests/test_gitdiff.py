@@ -82,6 +82,48 @@ def test_branch_invalid_base_message_keeps_value(repo):
         gitdiff.gather_diff(str(repo), "branch", base="-bad", timeout=30, max_bytes=200_000)
 
 
+# --- friendlier invalid_base for an unfetched local ref (#7) ----------------
+
+
+def test_branch_unfetched_looking_base_hints_fetch(repo):
+    # A syntactically valid, branch-name-shaped base that resolves via NEITHER a local
+    # ref NOR any remote-tracking ref is the shallow-single-branch-clone signature: the
+    # ref was simply never fetched. The message should say so, mentioning `fetch` as an
+    # actionable hint, rather than the bare "does not resolve" wording. `repo` has no
+    # remote configured at all, so "upstream-main" satisfies "neither local nor
+    # remote-tracking" without depending on the host's `init.defaultBranch`.
+    with pytest.raises(gitdiff.InvalidBaseError, match="fetch") as exc:
+        gitdiff.gather_diff(
+            str(repo), "branch", base="upstream-main", timeout=30, max_bytes=200_000
+        )
+    assert "fetch" in str(exc.value).lower()
+
+
+def test_branch_invalid_syntax_base_has_no_fetch_hint(repo):
+    # A base that fails `_valid_ref` (malformed/unsafe syntax, e.g. a leading `-`) is
+    # never a git ref of any kind -- fetching cannot fix it, so the "may need fetching"
+    # hint must not leak onto this pre-existing validation path. The message stays the
+    # plain "invalid base ref" wording this repo already emits.
+    with pytest.raises(gitdiff.InvalidBaseError, match="invalid base ref") as exc:
+        gitdiff.gather_diff(str(repo), "branch", base="-bad", timeout=30, max_bytes=200_000)
+    assert "fetch" not in str(exc.value).lower()
+
+
+def test_branch_scope_with_named_local_branch(repo):
+    # Regression guard: test_branch_scope above resolves `base` via a raw commit SHA;
+    # this exercises the same happy path through an actual local branch NAME, which is
+    # the shape the new unfetched-ref detection inspects. It must not fire when the name
+    # resolves locally.
+    _git(repo, "branch", "release-base")
+    (repo / "calc.py").write_text("def add(a, b):\n    return a + b + 1\n")
+    _git(repo, "commit", "-qam", "tweak")
+    res = gitdiff.gather_diff(
+        str(repo), "branch", base="release-base", timeout=30, max_bytes=200_000
+    )
+    assert "a + b + 1" in res.text
+    assert res.summary.files_changed == 1
+
+
 def test_commit_scope(repo):
     head = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
