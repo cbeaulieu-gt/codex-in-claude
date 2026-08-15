@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from codex_in_claude._core import gitdiff, gitproc
+from codex_in_claude._core import gitdiff, gitproc, wslpath
 from codex_in_claude._core.redaction import redact_text
 
 if TYPE_CHECKING:
@@ -139,7 +139,7 @@ def _configured_filter_drivers(
         text=True,
         timeout=timeout,
         check=False,
-        env=_base_env(),
+        env=_base_env(repo),
     )
     # returncode 1 is git's "no matching keys" (no filters configured), not an error.
     if proc.returncode not in (0, 1):
@@ -243,11 +243,25 @@ def _hardening_flags(repo: str, timeout: int, *, aliases: Iterable[str] = ()) ->
     ]
 
 
-def _base_env() -> dict[str, str]:
-    """Locale/PATH pinning shared by every git subprocess (deterministic output, no
-    inherited locale surprises). Delegates to :func:`gitdiff._base_git_env` so the
-    stripped-env construction lives in exactly one place across `_core` (#330)."""
-    return gitdiff._base_git_env()
+def _base_env(repo: str) -> dict[str, str]:
+    """Return the git environment for a `worktree.py` child, with any WSL gitdir
+    override stripped back out.
+
+    Built from :func:`gitdiff._base_git_env` (not the override-free
+    :func:`gitdiff._base_env_no_override`) so this stays the SAME chokepoint
+    `gitdiff.py` uses -- e.g. the test suite's `_isolate_git_env` fixture
+    monkeypatches `gitdiff._base_git_env` to add `GIT_CONFIG_NOSYSTEM=1`, and
+    that isolation must keep applying to every `worktree.py` git child too.
+    `GIT_DIR`/`GIT_WORK_TREE` are then explicitly popped: plan section 3.6
+    requires the write path to refuse Windows-shaped linked worktrees instead
+    of translating them, because passing a translated ``GIT_DIR`` to
+    ``git worktree add`` could write a WSL-shaped pointer into the user's real
+    repository metadata, making it unreadable to Windows-side git.
+    """
+    env = gitdiff._base_git_env(repo)
+    env.pop("GIT_DIR", None)
+    env.pop("GIT_WORK_TREE", None)
+    return env
 
 
 def _git(
@@ -262,7 +276,7 @@ def _git(
         text=True,
         timeout=timeout,
         check=False,
-        env=_base_env(),
+        env=_base_env(repo),
     )
 
 
@@ -288,6 +302,14 @@ def _git_ok(repo: str, args: list[str], timeout: int, *, aliases: Iterable[str] 
 
 
 def _ensure_repo_with_head(repo: str, timeout: int) -> None:
+    gitdir = wslpath.linked_worktree_gitdir_from_ancestors(repo)
+    if gitdir is not None:
+        raise NotAGitRepoError(
+            "workspace's .git file points at a Windows-shaped linked-worktree "
+            f"gitdir ({gitdir}); codex_delegate cannot write into a Windows-created "
+            "worktree from WSL. Recreate the worktree natively under WSL, or run "
+            "codex_delegate from the primary checkout instead."
+        )
     inside = _git(repo, ["rev-parse", "--is-inside-work-tree"], timeout)
     if inside.returncode != 0 or inside.stdout.strip() != "true":
         raise NotAGitRepoError("workspace is not a git repository")
@@ -387,7 +409,7 @@ def _count_uncommitted(repo: str, timeout: int) -> int:
         return gitproc.run_lines(
             cmd,
             cwd=repo,
-            env=_base_env(),
+            env=_base_env(repo),
             timeout=timeout,
             max_line_bytes=_PLAN_LINE_CAP,
             consume=lambda lines: sum(1 for line in lines if line.strip()),
@@ -452,7 +474,7 @@ def _tracked_files_and_bytes(repo: str, timeout: int) -> tuple[int, int]:
         return gitproc.run_lines(
             cmd,
             cwd=repo,
-            env=_base_env(),
+            env=_base_env(repo),
             timeout=timeout,
             max_line_bytes=_PLAN_LINE_CAP,
             consume=_parse_tracked,
@@ -527,7 +549,7 @@ def _seed_uncommitted(repo: str, wt: str, timeout: int) -> str | None:
         text=True,
         timeout=timeout,
         check=False,
-        env=_base_env(),
+        env=_base_env(wt),
     )
     if apply.returncode != 0:
         return "uncommitted changes could not be replayed; worktree based on HEAD only"

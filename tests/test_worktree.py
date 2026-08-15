@@ -1479,3 +1479,100 @@ def test_alias_replacement_cannot_abut_an_alphanumeric():
     out = worktree.sanitize_prose(spaced, ALIASES)
     assert out == f"eyJ{'a' * 8} . {'b' * 8} . {'c' * 8}"
     assert ".." not in out
+
+
+# --- WSL gitdir-pointer fail-fast guard (fork issue #4, plan §3.6) -----------------
+#
+# Resolved posture: `codex_delegate`'s write path (`git worktree add`) must REFUSE,
+# not translate, when it detects a Windows-shaped `gitdir:` pointer -- a translated
+# GIT_DIR would make `git worktree add` write a WSL-shaped path into the user's own
+# `.git/worktrees/*/gitdir`, a cross-tool pollution of their real repository
+# (unreadable from Windows-side git). So, unlike `gitdiff.py`, `worktree._base_env`
+# must NEVER apply `wslpath.git_dir_override` -- the guard raises instead, at the
+# point `_ensure_repo_with_head` runs (worktree.py:290-296 today), before any write.
+
+
+def test_ensure_repo_with_head_fails_fast_for_windows_shaped_gitdir_pointer(tmp_path):
+    # Today, this same fixture already raises `WorktreeError` -- but only as an
+    # INCIDENTAL side effect of a raw filter-driver probe choking on the unresolvable
+    # pointer ("not a git repository: (NULL)"), not a deliberate, actionable guard.
+    # The fix must raise a message that actually names the condition. Matched on a
+    # disjunction of plausible actionable-message vocabulary (not one exact phrase)
+    # so any reasonable wording of the guard satisfies this without a dispute
+    # round-trip -- "not a git repository" contains none of these today.
+    (tmp_path / ".git").write_text("gitdir: I:/apps/x/.git/worktrees/n\n")
+    with pytest.raises(worktree.NotAGitRepoError) as ei:
+        worktree.ensure_repo_with_head(str(tmp_path), timeout=10)
+    msg = str(ei.value).lower()
+    assert any(token in msg for token in ("gitdir", "windows", "wsl")), msg
+
+
+def test_create_fails_fast_for_windows_shaped_gitdir_pointer_before_any_write(tmp_path):
+    # The guard fires before codex_delegate's write path -- create() must refuse
+    # rather than attempt (and half-succeed or corrupt) a `git worktree add`. Same
+    # disjunctive message match as the guard test above.
+    (tmp_path / ".git").write_text("gitdir: I:/apps/x/.git/worktrees/n\n")
+    with pytest.raises(worktree.NotAGitRepoError) as ei:
+        worktree.create(str(tmp_path), timeout=30)
+    msg = str(ei.value).lower()
+    assert any(token in msg for token in ("gitdir", "windows", "wsl")), msg
+
+
+def test_ensure_repo_with_head_fails_fast_for_nested_windows_shaped_gitdir_pointer(tmp_path):
+    # CodeRabbit (Major): the guard's direct check (`linked_worktree_gitdir(repo)`, no
+    # ancestor walk) only catches the case where `repo` IS the linked-worktree root. A
+    # directory NESTED under that root, with no `.git` of its own, must still be caught
+    # -- via the ancestor-aware discovery path (`git_dir_override`'s walk-up) -- and raise
+    # the same actionable NotAGitRepoError, not fall through to the generic
+    # "workspace is not a git repository" message. Same disjunctive message match as the
+    # sibling guard tests above.
+    (tmp_path / ".git").write_text("gitdir: I:/apps/x/.git/worktrees/n\n")
+    nested = tmp_path / "src" / "pkg"
+    nested.mkdir(parents=True)
+    with pytest.raises(worktree.NotAGitRepoError) as ei:
+        worktree.ensure_repo_with_head(str(nested), timeout=10)
+    msg = str(ei.value).lower()
+    assert any(token in msg for token in ("gitdir", "windows", "wsl")), msg
+
+
+def test_base_env_never_applies_git_dir_override_for_windows_shaped_pointer(tmp_path):
+    # worktree._base_env deliberately does NOT thread wslpath.git_dir_override
+    # through, in any case -- translating here is exactly the cross-tool pollution
+    # §3.6 rejects, even though gitdiff.py's `_base_git_env` does translate.
+    (tmp_path / ".git").write_text("gitdir: I:/apps/x/.git/worktrees/n\n")
+    env = worktree._base_env(str(tmp_path))
+    assert "GIT_DIR" not in env
+    assert "GIT_WORK_TREE" not in env
+
+
+def test_base_env_never_applies_override_regardless_of_which_cwd_is_passed(tmp_path):
+    # Per-site path derivation (plan §2.3) still determines *which* path each
+    # worktree.py site passes as cwd (e.g. site 10 runs with cwd=wt while the site
+    # immediately above it runs with cwd=repo, worktree.py:516,530 vs :511) -- but
+    # combined with the resolved §3.6 fail-fast posture, the observable contract
+    # collapses to: no matter which path is passed, the override never appears.
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    (repo_dir / ".git").write_text("gitdir: I:/apps/x/.git/worktrees/n\n")
+    wt_dir = tmp_path / "wt"
+    wt_dir.mkdir()
+    (wt_dir / ".git").write_text("gitdir: I:/apps/y/.git/worktrees/m\n")
+
+    for cwd in (repo_dir, wt_dir):
+        env = worktree._base_env(str(cwd))
+        assert "GIT_DIR" not in env
+        assert "GIT_WORK_TREE" not in env
+
+
+def test_base_env_ordinary_repo_unaffected_by_cwd_parameter(repo):
+    # Containment property (plan §3.3), worktree.py side: an ordinary checkout's env
+    # is unaffected by threading `cwd` through -- no GIT_DIR/GIT_WORK_TREE appear.
+    env = worktree._base_env(str(repo))
+    assert "GIT_DIR" not in env
+    assert "GIT_WORK_TREE" not in env
+    # CodeRabbit (Minor): `_base_env` is built from `gitdiff._base_git_env`, the SAME
+    # chokepoint the `_isolate_git_env` autouse fixture patches to add
+    # GIT_CONFIG_NOSYSTEM=1 (conftest.py) -- that isolation must still be present after
+    # `_base_env` pops GIT_DIR/GIT_WORK_TREE back out, not just the absence of the two
+    # popped keys.
+    assert env.get("GIT_CONFIG_NOSYSTEM") == "1"
