@@ -248,6 +248,40 @@ def test_branch_remote_tracking_collision_still_hints_fetch(repo):
     assert "fetch" in str(exc.value).lower()
 
 
+# --- friendlier invalid_base: bare base matching a configured remote's name
+# (CodeRabbit review 3789675640 on PR #8, round 2) ----------------------------
+#
+# `_base_ref_is_fetchable_branch_name` gates the fetch hint with
+# `base.partition("/")[0] not in remotes`. When `base` contains no "/",
+# `partition("/")[0]` returns the whole string, so a BARE base that happens to equal
+# a configured remote's name (e.g. base="origin" with "origin" configured) wrongly
+# falls into the exclusion: `"origin" not in ["origin"]` is False, so the function
+# says "not a plausible branch name" and suppresses the hint. But "origin" IS a
+# legal git branch name, distinct from the remote of the same name -- only
+# QUALIFIED refs shaped like "<remote>/<branch>" (already covered by
+# test_branch_qualified_remote_ref_shaped_base_has_no_fetch_hint above) should be
+# excluded. The tests below pin the correct behavior for the bare-name case.
+
+
+def test_base_ref_is_fetchable_branch_name_bare_remote_name_returns_true():
+    # Direct unit pin on the helper CodeRabbit flagged: a bare base equal to the sole
+    # configured remote's name is still a plausible fetchable branch name.
+    assert gitdiff._base_ref_is_fetchable_branch_name("origin", ["origin"]) is True
+
+
+def test_branch_bare_base_matching_remote_name_still_hints_fetch(repo):
+    # End-to-end companion: base exactly equal to the sole configured remote's name
+    # must still get the fetch hint through the public gather_diff path -- the bug
+    # silently suppressed it, downgrading the message to the plain "does not
+    # resolve" wording instead.
+    _git(repo, "remote", "add", "origin", "https://example.invalid/upstream.git")
+    with pytest.raises(gitdiff.InvalidBaseError, match="fetch") as exc:
+        gitdiff.gather_diff(str(repo), "branch", base="origin", timeout=30, max_bytes=200_000)
+    message = str(exc.value)
+    assert "fetch" in message.lower()
+    assert "origin" in message
+
+
 def test_branch_scope_with_named_local_branch(repo):
     # Regression guard: test_branch_scope above resolves `base` via a raw commit SHA;
     # this exercises the same happy path through an actual local branch NAME, which is
