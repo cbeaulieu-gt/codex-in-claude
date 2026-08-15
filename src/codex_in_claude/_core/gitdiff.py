@@ -513,6 +513,21 @@ def _resolve_commit(cwd: str, ref: str, timeout: int) -> str | None:
     return proc.stdout.strip() or None
 
 
+def _base_ref_known_locally(cwd: str, base: str, timeout: int) -> bool:
+    """Return whether ``base`` names a local branch or remote-tracking branch."""
+    refs = _git(
+        cwd,
+        ["for-each-ref", "--format=%(refname)", "--", f"refs/heads/{base}", "refs/remotes"],
+        timeout,
+    )
+    local_ref = f"refs/heads/{base}"
+    remote_suffix = f"/{base}"
+    return any(
+        ref == local_ref or (ref.startswith("refs/remotes/") and ref.endswith(remote_suffix))
+        for ref in refs.splitlines()
+    )
+
+
 def _require_head(cwd: str, timeout: int) -> str:
     """Resolve HEAD to its commit object ID, or raise if it does not resolve (an unborn branch).
 
@@ -562,6 +577,11 @@ def _diff_args(
             raise InvalidBaseError(f"invalid base ref: {base!r}")
         base_sha = _resolve_commit(cwd, base, timeout)
         if base_sha is None:
+            if not _base_ref_known_locally(cwd, base, timeout):
+                raise InvalidBaseError(
+                    f"base ref not found locally (never fetched?): {base!r}. "
+                    f"Try: git fetch origin {base}:{base}"
+                )
             raise InvalidBaseError(f"base ref does not resolve to a commit: {base!r}")
         # Pin both ends of the range. `<base_sha>...<head_sha>` preserves the three-dot merge-base
         # semantics of `<base>...HEAD` while being immutable. `branch` has no state token, so an
