@@ -38,9 +38,10 @@ agent-visible MCP surface; the result `fingerprint` changes when they do.
 
 ### Fixed
 
-- **Branch reviews now suggest fetching a syntactically valid base ref that is absent locally.**
-  The `invalid_base` message distinguishes this shallow single-branch clone signature from an
-  invalid ref and includes an actionable `git fetch` hint.
+- **Branch reviews now suggest fetching only a simple branch-shaped base absent locally.**
+  The `invalid_base` message offers the hint only when a real remote is configured, names that
+  remote (preferring `origin`), and distinguishes exact local and remote-tracking refs without
+  mistaking SHA-like, special, qualified, or suffix-colliding refs for an unfetched branch.
 - **Windows-created linked git worktree pointers are now translated for WSL2 reviews.**
   `codex_review_changes` derives `GIT_DIR` and `GIT_WORK_TREE` from the same working directory
   used by each git child, allowing a `.git` file containing `gitdir: I:/...` to resolve under

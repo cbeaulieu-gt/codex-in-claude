@@ -513,19 +513,32 @@ def _resolve_commit(cwd: str, ref: str, timeout: int) -> str | None:
     return proc.stdout.strip() or None
 
 
-def _base_ref_known_locally(cwd: str, base: str, timeout: int) -> bool:
-    """Return whether ``base`` names a local branch or remote-tracking branch."""
+def _configured_remotes(cwd: str, timeout: int) -> list[str]:
+    """Return configured remote names in git's deterministic display order."""
+    return [remote for remote in _git(cwd, ["remote"], timeout).splitlines() if remote]
+
+
+def _base_ref_is_fetchable_branch_name(base: str, remotes: list[str]) -> bool:
+    """Return whether ``base`` plausibly names a simple branch that could be fetched."""
+    if base in {"HEAD", "FETCH_HEAD"} or base.startswith("refs/"):
+        return False
+    if len(base) >= 7 and re.fullmatch(r"[0-9A-Fa-f]+", base):
+        return False
+    return base.partition("/")[0] not in remotes
+
+
+def _base_ref_known_locally(cwd: str, base: str, remotes: list[str], timeout: int) -> bool:
+    """Return whether ``base`` exactly names a local or configured remote-tracking branch."""
+    candidate_refs = {
+        f"refs/heads/{base}",
+        *(f"refs/remotes/{remote}/{base}" for remote in remotes),
+    }
     refs = _git(
         cwd,
-        ["for-each-ref", "--format=%(refname)", "--", f"refs/heads/{base}", "refs/remotes"],
+        ["for-each-ref", "--format=%(refname)", "--", *candidate_refs],
         timeout,
     )
-    local_ref = f"refs/heads/{base}"
-    remote_suffix = f"/{base}"
-    return any(
-        ref == local_ref or (ref.startswith("refs/remotes/") and ref.endswith(remote_suffix))
-        for ref in refs.splitlines()
-    )
+    return any(ref in candidate_refs for ref in refs.splitlines())
 
 
 def _require_head(cwd: str, timeout: int) -> str:
@@ -577,11 +590,19 @@ def _diff_args(
             raise InvalidBaseError(f"invalid base ref: {base!r}")
         base_sha = _resolve_commit(cwd, base, timeout)
         if base_sha is None:
-            if not _base_ref_known_locally(cwd, base, timeout):
+            remotes = _configured_remotes(cwd, timeout)
+            if (
+                remotes
+                and _base_ref_is_fetchable_branch_name(base, remotes)
+                and not _base_ref_known_locally(cwd, base, remotes, timeout)
+            ):
+                remote = "origin" if "origin" in remotes else remotes[0]
                 raise InvalidBaseError(
                     f"base ref not found locally (never fetched?): {base!r}. "
-                    f"Try: git fetch origin {base}:{base}"
+                    f"Try: git fetch {remote} {base}:{base}"
                 )
+            if base == "FETCH_HEAD":
+                raise InvalidBaseError("base ref does not resolve to a commit")
             raise InvalidBaseError(f"base ref does not resolve to a commit: {base!r}")
         # Pin both ends of the range. `<base_sha>...<head_sha>` preserves the three-dot merge-base
         # semantics of `<base>...HEAD` while being immutable. `branch` has no state token, so an
