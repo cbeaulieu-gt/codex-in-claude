@@ -524,7 +524,8 @@ def _base_ref_is_fetchable_branch_name(base: str, remotes: list[str]) -> bool:
         return False
     if len(base) >= 7 and re.fullmatch(r"[0-9A-Fa-f]+", base):
         return False
-    return base.partition("/")[0] not in remotes
+    remote, separator, _ = base.partition("/")
+    return not separator or remote not in remotes
 
 
 def _base_ref_known_locally(cwd: str, base: str, remotes: list[str], timeout: int) -> bool:
