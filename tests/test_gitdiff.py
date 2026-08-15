@@ -82,38 +82,178 @@ def test_branch_invalid_base_message_keeps_value(repo):
         gitdiff.gather_diff(str(repo), "branch", base="-bad", timeout=30, max_bytes=200_000)
 
 
-# --- friendlier invalid_base for an unfetched local ref (#7) ----------------
+# --- friendlier invalid_base for an unfetched local ref (#7, round 2) -------
+#
+# Round 1's `_base_ref_known_locally()` heuristic drew a REQUEST_CHANGES-equivalent
+# adversarial review (PR #8) with 4 confirmed blocking bugs:
+#   1. No remote-existence check -- the fetch hint fired even with zero configured
+#      remotes, "approving" a `git fetch origin ...` guaranteed to fail.
+#   2. `_valid_ref()` is far broader than a simple branch name, so malformed-but-
+#      regex-accepted strings also got the hint (covered by
+#      test_branch_invalid_syntax_base_has_no_fetch_hint, unaffected by round 2).
+#   3. Unsupported ref shapes (SHAs, HEAD/FETCH_HEAD, qualified remote refs like
+#      `origin/main`) risked the same misleading generic fetch hint.
+#   4. Suffix-based remote-ref matching (`ref.endswith("/main")`) let an unrelated
+#      nested branch (`origin/team/main`) mask a genuinely-unfetched `main`.
+# The tests below pin the round-2 fix for each finding.
 
 
-def test_branch_unfetched_looking_base_hints_fetch(repo):
+def test_branch_unfetched_looking_base_with_remote_hints_fetch(repo):
     # A syntactically valid, branch-name-shaped base that resolves via NEITHER a local
     # ref NOR any remote-tracking ref is the shallow-single-branch-clone signature: the
-    # ref was simply never fetched. The message should say so, mentioning `fetch` as an
-    # actionable hint, rather than the bare "does not resolve" wording. `repo` has no
-    # remote configured at all, so "upstream-main" satisfies "neither local nor
-    # remote-tracking" without depending on the host's `init.defaultBranch`.
+    # ref was simply never fetched -- but only once a remote genuinely exists to fetch
+    # it from (finding 1). "upstream-main" satisfies "neither local nor
+    # remote-tracking" without depending on the host's `init.defaultBranch`. The hint
+    # must name the real configured remote rather than assuming "origin" exists.
+    _git(repo, "remote", "add", "origin", "https://example.invalid/upstream.git")
     with pytest.raises(gitdiff.InvalidBaseError, match="fetch") as exc:
         gitdiff.gather_diff(
             str(repo), "branch", base="upstream-main", timeout=30, max_bytes=200_000
         )
-    assert "fetch" in str(exc.value).lower()
+    message = str(exc.value)
+    assert "fetch" in message.lower()
+    assert "origin" in message
+
+
+def test_branch_fetch_hint_names_the_sole_configured_remote(repo):
+    # Finding 1's requirement has two halves: the hint must fire only WITH a real
+    # remote, AND it must name a REAL configured remote rather than hardcoding
+    # "origin". This isolates the second half: the sole configured remote is named
+    # "fork" (not "origin"), so a hint that still says "origin" -- whether hardcoded
+    # or coincidentally matching a differently-picked default -- is wrong. The base
+    # name deliberately avoids containing "fork" so the assertion can't pass by
+    # accident.
+    _git(repo, "remote", "add", "fork", "https://example.invalid/fork.git")
+    with pytest.raises(gitdiff.InvalidBaseError, match="fetch") as exc:
+        gitdiff.gather_diff(
+            str(repo), "branch", base="never-fetched", timeout=30, max_bytes=200_000
+        )
+    message = str(exc.value)
+    assert "fork" in message
+    assert "origin" not in message
+
+
+def test_branch_unfetched_looking_base_no_remote_configured_has_no_fetch_hint(repo):
+    # Direct regression guard for finding 1 (the confirmed bug CodeRabbit/Codex flagged):
+    # the same shallow-clone-shaped scenario as the test above, but `repo` has ZERO
+    # remotes configured. `git fetch origin upstream-main:upstream-main` is guaranteed
+    # to fail with no `origin` remote, so the hint must not fire -- the message stays
+    # the bare "does not resolve" wording.
+    with pytest.raises(gitdiff.InvalidBaseError, match="does not resolve") as exc:
+        gitdiff.gather_diff(
+            str(repo), "branch", base="upstream-main", timeout=30, max_bytes=200_000
+        )
+    assert "fetch" not in str(exc.value).lower()
 
 
 def test_branch_invalid_syntax_base_has_no_fetch_hint(repo):
     # A base that fails `_valid_ref` (malformed/unsafe syntax, e.g. a leading `-`) is
     # never a git ref of any kind -- fetching cannot fix it, so the "may need fetching"
     # hint must not leak onto this pre-existing validation path. The message stays the
-    # plain "invalid base ref" wording this repo already emits.
+    # plain "invalid base ref" wording this repo already emits. Already correctly gated
+    # by `_valid_ref`, unaffected by round 2.
     with pytest.raises(gitdiff.InvalidBaseError, match="invalid base ref") as exc:
         gitdiff.gather_diff(str(repo), "branch", base="-bad", timeout=30, max_bytes=200_000)
     assert "fetch" not in str(exc.value).lower()
 
 
+@pytest.mark.parametrize(
+    "sha",
+    [
+        pytest.param("abcdef1234567890abcdef1234567890abcdef12", id="full-40-hex"),
+        pytest.param("abcdef1", id="abbrev-7-hex"),
+        pytest.param("abcdef12", id="abbrev-8-hex"),
+    ],
+)
+def test_branch_sha_shaped_base_that_does_not_resolve_has_no_fetch_hint(repo, sha):
+    # A base shaped like a git commit SHA (full 40-hex, or a short 7/8-hex
+    # abbreviation) that fails to resolve must not get the fetch hint -- "fetching a
+    # SHA-shaped name" is not a coherent git operation, so the hint would be actively
+    # misleading (finding 3). A remote IS configured so the ONLY thing suppressing the
+    # hint is the SHA-shape gate, isolating this from finding 1's remote-existence fix.
+    _git(repo, "remote", "add", "origin", "https://example.invalid/upstream.git")
+    with pytest.raises(gitdiff.InvalidBaseError, match="does not resolve") as exc:
+        gitdiff.gather_diff(str(repo), "branch", base=sha, timeout=30, max_bytes=200_000)
+    assert "fetch" not in str(exc.value).lower()
+
+
+def test_branch_fetch_head_shaped_base_has_no_fetch_hint(repo):
+    # `FETCH_HEAD` is a special git ref, not a branch name; in a repo where nothing has
+    # ever been fetched it genuinely fails to resolve. It must not get the fetch hint
+    # (finding 3). `HEAD` itself always resolves in a repo with a commit (that's the
+    # happy path), so it has no realistic failing case to test here independently --
+    # only `FETCH_HEAD`'s failure mode is exercised.
+    _git(repo, "remote", "add", "origin", "https://example.invalid/upstream.git")
+    with pytest.raises(gitdiff.InvalidBaseError, match="does not resolve") as exc:
+        gitdiff.gather_diff(str(repo), "branch", base="FETCH_HEAD", timeout=30, max_bytes=200_000)
+    assert "fetch" not in str(exc.value).lower()
+
+
+@pytest.mark.parametrize(
+    "base",
+    [
+        pytest.param("origin/no-such-branch", id="remote-slash-branch"),
+        pytest.param("refs/remotes/origin/main", id="fully-qualified-remote-tracking-ref"),
+    ],
+)
+def test_branch_qualified_remote_ref_shaped_base_has_no_fetch_hint(repo, base):
+    # A base shaped like a compound, already-qualified ref string -- `<remote>/<branch>`
+    # or the fully-qualified `refs/remotes/<remote>/<branch>` form -- that does not
+    # actually resolve must not get the fetch hint even though a remote IS configured:
+    # the local/remote-tracking probe and the simple-branch-name shape gate must not
+    # misfire a hint for a compound ref string (finding 3).
+    _git(repo, "remote", "add", "origin", "https://example.invalid/upstream.git")
+    with pytest.raises(gitdiff.InvalidBaseError, match="does not resolve") as exc:
+        gitdiff.gather_diff(str(repo), "branch", base=base, timeout=30, max_bytes=200_000)
+    assert "fetch" not in str(exc.value).lower()
+
+
+def test_branch_slash_shaped_branch_name_still_hints_fetch(repo):
+    # Guards against an over-broad shape gate: a genuinely simple, fetchable branch
+    # name that merely CONTAINS a slash (a common convention, e.g. `feature/xyz`) is not
+    # the same shape as a qualified `<remote>/<branch>` ref and must still get the fetch
+    # hint. A shape gate that rejects every `/`-bearing name (rather than specifically
+    # excluding names shaped like `<configured-remote>/...`) would wrongly kill the hint
+    # for this common, legitimately-unfetched case.
+    _git(repo, "remote", "add", "origin", "https://example.invalid/upstream.git")
+    with pytest.raises(gitdiff.InvalidBaseError, match="fetch") as exc:
+        gitdiff.gather_diff(
+            str(repo), "branch", base="feature/never-fetched", timeout=30, max_bytes=200_000
+        )
+    assert "fetch" in str(exc.value).lower()
+
+
+def test_branch_remote_tracking_collision_still_hints_fetch(repo):
+    # The confirmed false positive (finding 4, CodeRabbit-flagged and Codex-confirmed):
+    # `base="main"` must NOT be masked by an unrelated remote-tracking ref that merely
+    # shares the same tail segment. `refs/remotes/origin/team/main` names a DIFFERENT
+    # branch (`origin/team/main`), not `origin/main` -- round 1's suffix match
+    # (`ref.endswith("/main")`) incorrectly treated this as "main is known locally",
+    # wrongly suppressing the fetch hint for a base that genuinely needs fetching. The
+    # exact-match fix must still fire the hint (proving the collision no longer masks
+    # it, not merely that nothing crashes).
+    #
+    # Renaming the current branch away from "main" (whatever `init.defaultBranch`
+    # produced) guarantees `base="main"` cannot ALSO resolve as the local branch,
+    # which would make this scenario untestable.
+    _git(repo, "branch", "-m", "trunk")
+    _git(repo, "remote", "add", "origin", "https://example.invalid/upstream.git")
+    head_sha = run_git(repo, "rev-parse", "HEAD").stdout.strip()
+    # A real remote-tracking ref for a DIFFERENTLY NAMED branch (`team/main`), built
+    # with `update-ref` directly so the test exercises real git ref resolution without
+    # needing a genuinely fetchable second repo.
+    _git(repo, "update-ref", "refs/remotes/origin/team/main", head_sha)
+    with pytest.raises(gitdiff.InvalidBaseError, match="fetch") as exc:
+        gitdiff.gather_diff(str(repo), "branch", base="main", timeout=30, max_bytes=200_000)
+    assert "fetch" in str(exc.value).lower()
+
+
 def test_branch_scope_with_named_local_branch(repo):
     # Regression guard: test_branch_scope above resolves `base` via a raw commit SHA;
     # this exercises the same happy path through an actual local branch NAME, which is
-    # the shape the new unfetched-ref detection inspects. It must not fire when the name
-    # resolves locally.
+    # the shape the unfetched-ref detection inspects. It must not fire when the name
+    # resolves locally -- resolution succeeds via the local ref alone, so no remote
+    # needs to be configured for this path.
     _git(repo, "branch", "release-base")
     (repo / "calc.py").write_text("def add(a, b):\n    return a + b + 1\n")
     _git(repo, "commit", "-qam", "tweak")
