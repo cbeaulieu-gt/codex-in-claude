@@ -122,6 +122,17 @@ def test_pyproject_version_matches_package():
         assert __version__ == pyproject["project"]["version"]
 
 
+def test_pyproject_pins_uv_link_mode_copy():
+    """uv's default hardlink install mode silently corrupts `.venv` when the checkout lives
+    on a Windows drive mounted into WSL2 via DrvFs (issue #11): `.dist-info` metadata lands
+    correctly but a package's actual module files never get copied, so `uv sync` reports the
+    package satisfied while it's unimportable (`ModuleNotFoundError`) at runtime. Pinning
+    `[tool.uv] link-mode = "copy"` makes uv always copy instead of hardlink — reliable across
+    the DrvFs boundary and a no-op on native Linux/macOS."""
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    assert pyproject["tool"]["uv"]["link-mode"] == "copy"
+
+
 def _skill_frontmatter(skill_md: Path) -> dict[str, object]:
     """Parse and validate one shipped skill's YAML frontmatter."""
     lines = skill_md.read_text().splitlines()
