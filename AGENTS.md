@@ -125,27 +125,30 @@ Architectural decisions that affect the agent-visible surface are recorded in `d
 
 ## Release coordination
 
-The release PR bumps three version literals in lockstep — `pyproject.toml` version,
-`.claude-plugin/plugin.json`, and the `codex-in-claude==X.Y.Z` PyPI pin in `.mcp.json` — and rolls
-`CHANGELOG.md`'s `## [Unreleased]` into a dated section. `FINGERPRINT` is **not** part of the release
-bump: it moves in the feature/fix PRs that change the agent-visible surface (see Versioning), and the
-release PR only verifies it already reflects everything shipping. (`README.md` carries no pinned
-version literal — it uses a dynamic PyPI badge and marketplace install — so it needs no bump.) See
+The release PR bumps two version literals in lockstep — `pyproject.toml` version and
+`.claude-plugin/plugin.json` — and rolls `CHANGELOG.md`'s `## [Unreleased]` into a dated section.
+`FINGERPRINT` is **not** part of the release bump: it moves in the feature/fix PRs that change the
+agent-visible surface (see Versioning), and the release PR only verifies it already reflects
+everything shipping. (`README.md` carries no pinned version literal — it uses a dynamic PyPI badge
+and marketplace install — so it needs no bump. `.mcp.json` likewise carries no pinned version
+literal: per #9 it launches the MCP server from a local checkout via WSL2 for development, not the
+version-pinned PyPI release, so it has no version to keep in sync with a release.) See
 `docs/RELEASING.md` for the full release procedure and the one-time PyPI/GitHub setup.
 
 **The lockstep version bump belongs only in the dedicated `chore: release X.Y.Z` PR — never in a
 feature/fix PR.** Feature and fix PRs change `FINGERPRINT` (when the surface changed) and add their
-entry under `## [Unreleased]`, but leave the three version literals — `pyproject.toml`,
-`.claude-plugin/plugin.json`, and the `.mcp.json` pin — at the current released version. (`uv.lock`
-is not a version source and still changes freely in feature PRs when dependencies move; its own
-`codex-in-claude` `version` line is a derived mirror of `pyproject.toml` that `uv lock` refreshes as
-part of the release PR.) The release PR is the *only* place those three literals move, and it is
-merged immediately before the tag/publish. The reason is the `.mcp.json` pin (`codex-in-claude==X.Y.Z`):
-the moment it lands on `main`, that version must already exist on PyPI, or a plugin install from
-`main` hits an unresolvable pin. Bumping it in a feature PR opens that broken-pin window for the
-entire gap until the release ships. So a release is two PRs: the work lands under `## [Unreleased]`
-(no version-literal change), then a `chore: release` PR does the lockstep bump plus the
-`## [Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD` rollover.
+entry under `## [Unreleased]`, but leave the two version literals — `pyproject.toml` and
+`.claude-plugin/plugin.json` — at the current released version. (`uv.lock` is not a version source
+and still changes freely in feature PRs when dependencies move; its own `codex-in-claude` `version`
+line is a derived mirror of `pyproject.toml` that `uv lock` refreshes as part of the release PR.) The
+release PR is the *only* place those two literals move, and it is merged immediately before the
+tag/publish. The reason is `pyproject.toml`'s version, which is what actually gets published to PyPI:
+the moment it lands on `main`, that version must already exist on PyPI, or an install pinned to it
+(`pip install codex-in-claude==X.Y.Z`, `uvx --from codex-in-claude==X.Y.Z`) hits an unresolvable
+version. Bumping it in a feature PR opens that broken-pin window for the entire gap until the release
+ships. So a release is two PRs: the work lands under `## [Unreleased]` (no version-literal change),
+then a `chore: release` PR does the lockstep bump plus the `## [Unreleased]` →
+`## [X.Y.Z] - YYYY-MM-DD` rollover.
 
 ## Python support
 
