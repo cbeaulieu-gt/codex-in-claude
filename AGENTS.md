@@ -15,6 +15,14 @@ package.
 ## Tooling
 
 - Use `uv` for everything: `uv sync`, `uv run pytest`, `uv run <cmd>`. Never pip/poetry.
+- **`pyproject.toml` pins `[tool.uv] link-mode = "copy"`.** `uv`'s default hardlink install mode
+  silently corrupts installs when the checkout sits on a Windows drive mounted into WSL2 via
+  DrvFs — the live dev setup, since `.mcp.json` launches the MCP server against this local
+  checkout via WSL2 (#9): `.dist-info` metadata lands correctly but the package's actual module
+  files can fail to transfer, so `uv sync` reports success while the package is unimportable at
+  runtime (#11). Copy mode is reliable across that filesystem boundary and a no-op cost-wise on
+  native Linux/macOS — don't remove it to "speed up" installs without re-verifying on a
+  DrvFs-mounted checkout first.
 - **The gate.** This is the repo's single definition of it; every other doc links here rather than
   restating it. A change is not done until it passes:
 
