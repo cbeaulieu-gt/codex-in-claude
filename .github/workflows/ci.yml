@@ -35,8 +35,7 @@ jobs:
           # The CHANGELOG section is validated at release time (publish.yml), not here,
           # so a version can sit under ## [Unreleased] without breaking CI.
           grep -Fq "\"version\": \"${version}\"" .claude-plugin/plugin.json
-          # .mcp.json launches the published PyPI release, pinned to this exact version.
-          # Anchor on the trailing quote+comma so 0.1.1 does NOT match ==0.1.10.
-          grep -Fq "codex-in-claude==${version}\"," .mcp.json
+          # Issue #9: .mcp.json intentionally launches a local checkout, not a published release,
+          # so it no longer participates in version lockstep.
 
-          echo "Version ${version} is consistent across pyproject.toml, plugin.json, .mcp.json"
+          echo "Version ${version} is consistent across pyproject.toml and plugin.json"

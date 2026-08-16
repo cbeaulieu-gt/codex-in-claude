@@ -1,11 +1,12 @@
 {
   "mcpServers": {
     "codex-in-claude": {
-      "command": "uvx",
+      "command": "wsl.exe",
       "args": [
-        "--from",
-        "codex-in-claude==0.17.0",
-        "codex-in-claude-mcp"
+        "--",
+        "bash",
+        "-lc",
+        "uv run --project /mnt/i/ai/claude/codex-in-claude codex-in-claude-mcp"
       ]
     }
   }
