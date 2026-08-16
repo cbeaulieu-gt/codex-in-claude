@@ -99,6 +99,22 @@ def test_marketplace_valid():
     assert "codex-in-claude" in names
 
 
+def test_mcp_json_launches_via_wsl():
+    """.mcp.json launches the codex-in-claude MCP server through WSL2 against the local
+    checkout, not a pinned PyPI release (#9). Pure JSON/string structural assertion — this
+    must never spawn wsl.exe/uv/any subprocess, so it stays safe on CI runners (Ubuntu)
+    where wsl.exe does not exist."""
+    mcp = _load_json(".mcp.json")
+    entry = mcp["mcpServers"]["codex-in-claude"]
+    assert entry["command"] == "wsl.exe"
+    args = entry["args"]
+    assert "bash" in args
+    assert "-lc" in args
+    shell_commands = [a for a in args if "/mnt/" in a]
+    assert shell_commands, f"no WSL-mount-style path found in args: {args!r}"
+    assert any("codex-in-claude-mcp" in cmd for cmd in shell_commands)
+
+
 def test_pyproject_version_matches_package():
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
     # __version__ resolves from installed metadata; tolerate dev/unknown in source trees.
