@@ -60,6 +60,11 @@ dev = [
     "ty>=0.0.1a7",
 ]
 
+[tool.uv]
+# Hardlink mode (the default) silently corrupts installs when the checkout sits on a
+# Windows drive mounted into WSL2 via DrvFs — see AGENTS.md § Tooling and issue #11.
+link-mode = "copy"
+
 [tool.ruff]
 line-length = 100
 # Matches requires-python (>=3.11).

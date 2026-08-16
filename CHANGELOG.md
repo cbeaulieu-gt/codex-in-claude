@@ -38,6 +38,11 @@ agent-visible MCP surface; the result `fingerprint` changes when they do.
 
 ### Fixed
 
+- **`uv sync` no longer silently corrupts `.venv` on a DrvFs-mounted Windows checkout.**
+  `pyproject.toml` now pins `[tool.uv] link-mode = "copy"`, avoiding `uv`'s default hardlink
+  install mode that can transfer a package's `.dist-info` metadata while leaving its actual
+  module files missing on disk when the checkout is a Windows drive mounted into WSL2 (this
+  project's dev setup per #9). See #11.
 - **Branch reviews now suggest fetching only a simple branch-shaped base absent locally.**
   The `invalid_base` message offers the hint only when a real remote is configured, names that
   remote (preferring `origin`), and distinguishes exact local and remote-tracking refs without
