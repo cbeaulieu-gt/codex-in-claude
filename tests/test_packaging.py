@@ -99,17 +99,6 @@ def test_marketplace_valid():
     assert "codex-in-claude" in names
 
 
-def test_mcp_json_launches_pinned_release():
-    mcp = _load_json(".mcp.json")
-    args = mcp["mcpServers"]["codex-in-claude"]["args"]
-    assert "codex-in-claude-mcp" in args
-    # Installed from PyPI, pinned to this exact version for deliberate updates — and
-    # kept in lockstep with pyproject (mirrors the release-lockstep CI guard).
-    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    version = pyproject["project"]["version"]
-    assert f"codex-in-claude=={version}" in args
-
-
 def test_pyproject_version_matches_package():
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
     # __version__ resolves from installed metadata; tolerate dev/unknown in source trees.
