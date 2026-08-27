@@ -5,6 +5,23 @@ Determine whether the new `pontonier==0.6.0` PyPI dependency (which upstream
 package) already contains equivalents of this fork's 5 merged WSL2/DrvFs fixes,
 to inform a merge-strategy decision (rebase-and-drop vs. rebase-and-carry-forward).
 
+## Artifact provenance
+
+Every `briandconnelly/pontonier` citation below is pinned to commit
+`81c96525c89d44dd0b9d612817703ffda8c91b35` — the commit the `v0.6.0` tag
+dereferences to (verified via the GitHub API) — rather than the mutable `main`
+branch, so the links stay valid even after `main` moves further. The per-file
+blob `sha` recorded alongside each citation is the exact content that was
+fetched and searched on 2026-08-21, independent of the link target.
+
+The `pontonier==0.6.0` PyPI artifacts were verified against
+`https://pypi.org/pypi/pontonier/0.6.0/json`:
+
+- sdist `pontonier-0.6.0.tar.gz` — sha256
+  `c5a7359846162d4a0bc167a486c63e3685a0bb128c0f95565a34d8c5954607b0`
+- wheel `pontonier-0.6.0-py3-none-any.whl` — sha256
+  `2b29a6459e719d6f714e56315fe53f30edacbfe61aaab5279153d938370d6db2`
+
 ## Requirements
 
 A fix counts as "already covered" only if pontonier's public source contains
@@ -36,7 +53,12 @@ project's pre-fix, unpatched version of the same file).
   `windows`/`Windows`, `gitdir`, `drive.letter` (via `-o` occurrence-mode grep,
   not just line-mode, since the GitHub API returns file content as a single
   JSON-escaped line), each paired with a positive control (a term known to be
-  present) to confirm the fetched dump was actually readable/searchable.
+  present) to confirm the fetched dump was actually readable/searchable. This
+  pattern is case-sensitive except where explicit alternation covers both
+  cases (e.g. `windows|Windows`); the all-caps identifier `_WINDOWS_DRIVE_RE`
+  (present in `gitdiff.py`) was missed on the first pass as a result and was
+  only found via direct source inspection — see Finding 1's case-sensitivity
+  caveat.
 - **Vendor-specific phrasing** — the commit message's own framing ("extracted
   from this code via moonbridge's fork, which carried the superset fixes") was
   checked directly against pontonier's `CHANGELOG.md`, which enumerates exactly
@@ -59,25 +81,38 @@ occurrence-mode matching: zero hits. Positive control run against the same
 saved dump (`def |redact|diff --git`, occurrence-mode) returned dozens of hits,
 confirming the dump is fully readable/searchable and the zero-hit WSL result is
 not an artifact of a truncated or unreadable fetch.
-https://github.com/briandconnelly/pontonier/blob/main/src/pontonier/core/gitdiff.py
+https://github.com/briandconnelly/pontonier/blob/81c96525c89d44dd0b9d612817703ffda8c91b35/src/pontonier/core/gitdiff.py
 (fetched 2026-08-21, file `sha` `9cd203189a60760333a34ab2b8903dc1636e41b8`).
 
 By contrast, this fork's `src/codex_in_claude/_core/gitdiff.py` imports
 `wslpath` directly (`from codex_in_claude._core import gitproc, streamcap, wslpath`)
-and calls `wslpath.linked_worktree_gitdir_from_ancestors(repo)` at the write-path
-guard (fork line ~305) to refuse writing into a Windows-created worktree from WSL.
-None of that exists in pontonier's copy.
+and calls `wslpath.git_dir_override(cwd)` inside `_base_git_env` (fork line ~358)
+to build `GIT_DIR`/`GIT_WORK_TREE` overrides for a Windows-created worktree. None
+of that exists in pontonier's copy.
+
+**Case-sensitivity caveat:** pontonier's `src/pontonier/core/gitdiff.py` does
+contain `_WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:")` (line 32), used inside
+`normalize_paths()` (line 153) to reject non-repo-relative `git diff` pathspec
+filter arguments (i.e., arguments starting with `/` or a drive letter) supplied
+by the caller. This identifier was missed by the case-sensitive grep pattern
+used in the initial pass (see Search axes used) because `windows|Windows` does
+not match the all-caps `_WINDOWS_DRIVE_RE`. Having found it via direct source
+inspection, it serves generic pathspec-filter validation, not gitdir-pointer
+translation or any equivalent of this fork's WSL2/DrvFs handling — so it does
+not change the **Absent** verdict for the actual capability being audited here
+(diff-engine WSL/path handling).
 
 ### 2. `worktree.py` — Windows-style linked-worktree `gitdir` pointer translation
 
 **Absent.** Fetched `src/pontonier/core/worktree.py` (55,753 bytes) in full and
 grepped for the same keyword set: zero hits, including `gitdir` itself (a term
 that would appear even in ordinary, non-WSL worktree-pointer handling).
-https://github.com/briandconnelly/pontonier/blob/main/src/pontonier/core/worktree.py
+https://github.com/briandconnelly/pontonier/blob/81c96525c89d44dd0b9d612817703ffda8c91b35/src/pontonier/core/worktree.py
 (fetched 2026-08-21, `sha` `c26df6d96cede4bfc58fdef7b0b7398162d27537`).
 
 This fork's `_core/worktree.py` imports `wslpath` and calls
-`wslpath.git_dir_override(cwd)` to build `GIT_DIR`/`GIT_WORK_TREE` overrides for a
+`wslpath.linked_worktree_gitdir_from_ancestors(repo)` (fork line ~305) as the
+write-path refusal guard, refusing to write a WSL-shaped gitdir pointer into a
 Windows-created worktree, plus a dedicated docstring/comment block explaining the
 WSL gitdir-pointer translation (fork issue #4). None of this is present upstream.
 
@@ -88,7 +123,7 @@ contains exactly 11 files: `__init__.py`, `gitdiff.py`, `gitproc.py`,
 `idempotency.py`, `jobs.py`, `jsoncache.py`, `redaction.py`, `runtime.py`,
 `streamcap.py`, `workspace.py`, `worktree.py`. There is no `wslpath.py`
 anywhere in the package (`src/pontonier/{core,backend,conventions,testing}`).
-https://github.com/briandconnelly/pontonier/tree/main/src/pontonier/core
+https://github.com/briandconnelly/pontonier/tree/81c96525c89d44dd0b9d612817703ffda8c91b35/src/pontonier/core
 (fetched 2026-08-21).
 
 ### 4. `workspace.py` — WSL2 drive-letter root / `workspace_root` translation
@@ -98,7 +133,7 @@ notably smaller than this fork's patched version). It contains only
 `WorkspaceResolution`, `_is_within`, `resolve_workspace`, and `server_cwd` — no
 `normalize_wsl_drive_path` function and no drive-letter handling anywhere in
 `resolve_workspace`'s `explicit` branch.
-https://github.com/briandconnelly/pontonier/blob/main/src/pontonier/core/workspace.py
+https://github.com/briandconnelly/pontonier/blob/81c96525c89d44dd0b9d612817703ffda8c91b35/src/pontonier/core/workspace.py
 (fetched 2026-08-21, `sha` `e3408da34719af0c56aa8810d2ff9a90d0a60f9c`).
 
 This fork's `_core/workspace.py` adds a `normalize_wsl_drive_path(path)` function
@@ -122,9 +157,9 @@ spawn `argv[0]` via `subprocess.Popen`/`subprocess.run` directly, relying on
 the OS `PATH`; `runtime.py` contains no ordered-candidate-probe fallback logic
 (no reference to `~/.local/bin`, `/usr/local/bin`, or `npm bin -g` anywhere in
 the file).
-https://github.com/briandconnelly/pontonier/blob/main/src/pontonier/core/runtime.py
+https://github.com/briandconnelly/pontonier/blob/81c96525c89d44dd0b9d612817703ffda8c91b35/src/pontonier/core/runtime.py
 (fetched 2026-08-21, `sha` `54b129b43981e5ffd2c8674bfed6acb29c040e30`);
-https://github.com/briandconnelly/pontonier/blob/main/src/pontonier/backend/protocol.py
+https://github.com/briandconnelly/pontonier/blob/81c96525c89d44dd0b9d612817703ffda8c91b35/src/pontonier/backend/protocol.py
 (fetched 2026-08-21, `sha` `ddff644ed38b460a1a30ea8a4c4e7e850878fc56`).
 
 `src/pontonier/core/__init__.py` states the module is "CLI-agnostic" and
@@ -133,13 +168,19 @@ scoped, offered here as context for why a Codex-specific resolver would be an
 unusual fit for that module, not as a claim about where this fork's
 `binresolve.py` logic should go.
 
+`pontonier.conventions/` was also checked (specifically `preflight.py`, 100
+lines): it contains zero WSL/DrvFs/Windows/drive-letter references, and it
+does a functionally different thing anyway (CLI `--help` feature-flag
+detection, not binary-path resolution), so the **Absent** verdict for binary
+resolution stands.
+
 ## Corroborating evidence: pontonier's own changelog
 
 `CHANGELOG.md`'s `0.1.0 (milestone M0 — core extraction)` entry states exactly
 what was carried over from "moonbridge's `_core`": *"jobs, worktree, gitdiff,
 redaction, runtime, gitproc, streamcap, idempotency, workspace, jsoncache,
 carrying **the redaction trailing-newline fix and the orphan-process sweep**."*
-https://github.com/briandconnelly/pontonier/blob/main/CHANGELOG.md
+https://github.com/briandconnelly/pontonier/blob/81c96525c89d44dd0b9d612817703ffda8c91b35/CHANGELOG.md
 (fetched 2026-08-21, `sha` `b3f77ba7cd5d3b446e0ca48c48b17ef0d292ed94`).
 
 Only two specific fixes are named as carried forward, and neither is WSL-related.
@@ -160,7 +201,7 @@ known/pending item in pontonier's issue tracker either.
 
 | # | Fork fix | File(s) | Pontonier status |
 |---|---|---|---|
-| 1 | Diff-engine WSL/path handling | `gitdiff.py` | **Absent** — no wsl/gitdir/drive references in full file text |
+| 1 | Diff-engine WSL/path handling | `gitdiff.py` | **Absent** — no gitdir-pointer or WSL translation logic; the one drive-letter regex present (`_WINDOWS_DRIVE_RE`) validates `git diff` pathspec filters only (see caveat) |
 | 2 | Linked-worktree gitdir pointer translation | `worktree.py` | **Absent** — no wsl/gitdir/drive references in full file text |
 | 3 | WSL path-translation helpers | `wslpath.py` | **Absent** — module does not exist in the package |
 | 4 | Workspace root drive-letter translation | `workspace.py` | **Absent** — `resolve_workspace` has no `normalize_wsl_drive_path` equivalent; file is materially smaller than the patched fork version |
@@ -175,12 +216,15 @@ known/pending item in pontonier's issue tracker either.
   `CHANGELOG.md`, and its issue tracker. Every file was fetched in full and
   searched with occurrence-mode (not line-mode) grep for
   `wsl|WSL|drvfs|DrvFs|/mnt/[a-z]|windows|Windows|gitdir|drive.letter`: zero
-  hits in every file. Positive controls (grepping the same saved dumps for
-  terms known to be present, e.g. `def `, `class `, `redact`, `worktree`)
+  hits in every file except the one case-sensitivity gap noted in Finding 1's
+  caveat (`_WINDOWS_DRIVE_RE`, which does not change that finding's verdict).
+  Positive controls (grepping the same saved dumps for
+  terms known to be present, e.g. "def ", "class ", `redact`, `worktree`)
   confirmed each dump was fully readable and searchable, so the zero-hit
   results are not artifacts of a truncated fetch. No equivalent WSL2/DrvFs
   handling was found anywhere in the publicly available
-  `briandconnelly/pontonier` source as of `main` on 2026-08-21 (repo created
+  `briandconnelly/pontonier` source as of commit
+  `81c96525c89d44dd0b9d612817703ffda8c91b35` (the `v0.6.0` tag; repo created
   2026-08-16, most recent push 2026-08-20T16:23:22Z). The changelog
   independently corroborates this by naming exactly what *was* carried
   forward from the `_core` extraction ("the redaction trailing-newline fix
